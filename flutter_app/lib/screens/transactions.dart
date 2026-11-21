@@ -36,6 +36,15 @@ enum TransactionFilter {
       };
 }
 
+enum GroupBy {
+  none('No Grouping'),
+  category('By Category'),
+  account('By Bank Account');
+
+  const GroupBy(this.label);
+  final String label;
+}
+
 class TransactionsView extends StatefulWidget {
   const TransactionsView({super.key});
   @override
@@ -46,6 +55,7 @@ class _TransactionsViewState extends State<TransactionsView> {
   int month = DateTime.now().month, year = DateTime.now().year;
   SortOption sort = SortOption.dateDescending;
   TransactionFilter typeFilter = TransactionFilter.all;
+  GroupBy groupBy = GroupBy.none;
   String search = '';
   Set<String>? selectedCategoryIDs;
   List<String> _lastFilterIDs = [];
@@ -98,8 +108,18 @@ class _TransactionsViewState extends State<TransactionsView> {
         final items = _filtered(sel);
         final grouped = <String, List<Expense>>{};
         for (final e in items) {
-          grouped.putIfAbsent(e.groupID, () => []).add(e);
+          final key = switch (groupBy) {
+            GroupBy.none => '',
+            GroupBy.category => e.groupID,
+            GroupBy.account => e.account ?? 'No Account',
+          };
+          grouped.putIfAbsent(key, () => []).add(e);
         }
+        final keys = switch (groupBy) {
+          GroupBy.none => grouped.keys.toList(),
+          GroupBy.category => categories.orderedIDs(grouped.keys.toSet()),
+          GroupBy.account => grouped.keys.toList()..sort(),
+        };
         final counted = items.where((e) => !e.transfer);
         final spent = counted.where((e) => e.type == TransactionType.expense).fold(0.0, (s, e) => s + e.price);
         final income = counted.where((e) => e.type == TransactionType.income).fold(0.0, (s, e) => s + e.price);
@@ -145,8 +165,7 @@ class _TransactionsViewState extends State<TransactionsView> {
                     child: _summary(context, income, spent, items.length, budget),
                   )),
                 ),
-                for (final id in categories.orderedIDs(grouped.keys.toSet()))
-                  SliverToBoxAdapter(child: constrained(_section(context, id, grouped[id]!))),
+                for (final k in keys) SliverToBoxAdapter(child: constrained(_section(context, k, grouped[k]!))),
                 const SliverToBoxAdapter(child: SizedBox(height: 90)),
               ],
             ],
@@ -169,6 +188,13 @@ class _TransactionsViewState extends State<TransactionsView> {
         selected: typeFilter,
         onSelected: (o) => setState(() => typeFilter = o),
         child: Icon(CupertinoIcons.line_horizontal_3_decrease, color: color, size: 22),
+      ),
+      gap(16),
+      MenuPicker<GroupBy>(
+        items: [for (final o in GroupBy.values) (o, Text(o.label))],
+        selected: groupBy,
+        onSelected: (o) => setState(() => groupBy = o),
+        child: Icon(CupertinoIcons.square_stack_3d_up, color: color, size: 22),
       ),
       gap(16),
       GestureDetector(
@@ -235,22 +261,28 @@ class _TransactionsViewState extends State<TransactionsView> {
     );
   }
 
-  Widget _section(BuildContext context, String id, List<Expense> list) {
-    final cat = categories.category(id);
+  Widget _section(BuildContext context, String key, List<Expense> list) {
     final total = list.fold(0.0, (s, e) => s + (e.type == TransactionType.income ? e.price : -e.price));
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 6, 4, 10),
-          child: Row(children: [
-            IconBadge(cat, size: 34, iconSize: 17, circle: true),
-            gap(8),
-            Expanded(child: Text(cat.displayName, style: Font.headline)),
-            Text(settings.money(total),
-                style: Font.subheadline.copyWith(color: total >= 0 ? context.c(SysColor.green) : context.secondaryLabel)),
-          ]),
-        ),
+        if (groupBy != GroupBy.none)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 6, 4, 10),
+            child: Row(children: [
+              if (groupBy == GroupBy.category)
+                IconBadge(categories.category(key), size: 34, iconSize: 17, circle: true)
+              else
+                BankBadge(key, size: 34),
+              gap(8),
+              Expanded(
+                  child: Text(groupBy == GroupBy.category ? categories.category(key).displayName : key,
+                      style: Font.headline)),
+              Text(settings.money(total),
+                  style: Font.subheadline
+                      .copyWith(color: total >= 0 ? context.c(SysColor.green) : context.secondaryLabel)),
+            ]),
+          ),
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: ColoredBox(
